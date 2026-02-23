@@ -1,0 +1,106 @@
+import { StatusBar, StyleSheet, Text, View } from "react-native";
+import { Redirect} from "expo-router";
+import { useEffect,useState } from "react";
+import { getSession } from "@/lib/authStorage";
+
+const PRIMARY = "#2563EB"; 
+
+export default function Index() {
+   const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState<any>(null);
+
+  useEffect(() => {
+
+  const check = async () => {
+     const s = await getSession();
+      setSession(s);
+
+    setTimeout(() => {
+        setLoading(false);
+      }, 1500);
+  };
+
+  check();
+}, []);
+
+
+ if (!loading) {
+    return <Redirect href={session ? "/tabs/home" : "/login"} />;
+  }
+
+  return (
+    <View style={styles.container}>
+         <StatusBar backgroundColor={PRIMARY} barStyle="light-content" />
+   
+         <View style={styles.logo}>
+           <Text style={styles.logoText}>DT</Text>
+         </View>
+   
+         <Text style={styles.title}>Debt Tracker</Text>
+         <Text style={styles.subtitle}>Manage debts with clarity</Text>
+   
+         <View style={styles.chipsRow}>
+           <View style={styles.chip}><Text style={styles.chipText}>Secure</Text></View>
+           <View style={styles.chip}><Text style={styles.chipText}>Fast</Text></View>
+           <View style={styles.chip}><Text style={styles.chipText}>Simple</Text></View>
+         </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: PRIMARY,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  logo: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 18,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+  },
+  logoText: {
+    color: "#FFFFFF",
+    fontSize: 28,
+    fontWeight: "700",
+  },
+  title: {
+    fontSize: 36,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: 0.6,
+  },
+  subtitle: {
+    fontSize: 15,
+    color: "rgba(255,255,255,0.9)",
+    marginTop: 8,
+    marginBottom: 18,
+  },
+  chipsRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  chip: {
+    backgroundColor: "rgba(255,255,255,0.12)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginHorizontal: 6,
+  },
+  chipText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+});

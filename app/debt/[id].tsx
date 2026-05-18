@@ -1,12 +1,13 @@
 import { Debt, getDebts, saveDebts } from "@/lib/debtStorage";
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { FlatList, StyleSheet, Text, View, Image, TouchableOpacity, } from "react-native";
 import AmountModal from "./amountModal";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function DebtDetailScreen() {
+  const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [debts, setDebts] = useState<Debt[]>([]);
   const [personName, setPersonName] = useState<string>("");
@@ -62,6 +63,9 @@ export default function DebtDetailScreen() {
     <SafeAreaView style={styles.container}>
       
       <View style={styles.headerContainer}>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={24} color="#111827" />
+        </TouchableOpacity>
         <Text style={styles.headerSubtitle}>{personName}</Text>
       </View>
 
@@ -134,15 +138,20 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F9FAFB", padding: 16 },
 
   headerContainer: {
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 16,
     paddingVertical: 8,
-    borderBottomWidth: 3,
+    borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
+    gap: 12,
+  },
+  backButton: {
+    padding: 4,
   },
   headerSubtitle: {
-    fontSize: 18,
-    color: "#6B7280",
-    marginTop: 2,
+    fontSize: 20,
+    color: "#111827",
     fontWeight: "800",
   },
 

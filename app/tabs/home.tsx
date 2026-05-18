@@ -1,15 +1,31 @@
 import { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity,} from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { getSession, clearSession } from "@/lib/authStorage";
 import { getUserDebts } from "@/lib/debtStorage";
 import { Ionicons } from "@expo/vector-icons";
+import { checkAndTriggerAutoBackup, triggerManualBackup } from "@/lib/backupService";
 
 export default function Home() {
   const router = useRouter();
   const [peopleCount, setPeopleCount] = useState(0);
   const [debtCount, setDebtCount] = useState(0);
   const [checking, setChecking] = useState(true);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportData = async () => {
+    try {
+      setExporting(true);
+      await triggerManualBackup();
+      Alert.alert("Success", "Backup file created and exported successfully!");
+    } catch (err) {
+      console.error("Export failed:", err);
+      Alert.alert("Export Failed", "Unable to export backup file.");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useFocusEffect(
   useCallback(() => {
@@ -26,6 +42,13 @@ export default function Home() {
 
     setChecking(false);
     loadStats();
+
+    // Trigger passive auto-backup check
+    try {
+      await checkAndTriggerAutoBackup();
+    } catch (err) {
+      console.error("Passive background auto-backup trigger failed:", err);
+    }
   };
 
   const loadStats = async () => {
@@ -50,6 +73,7 @@ export default function Home() {
   if (checking) return null;
 
   return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#F9FAFB" }}>
     <ScrollView
       style={styles.container}
       contentContainerStyle={{ flexGrow: 1 }}
@@ -63,12 +87,21 @@ export default function Home() {
             </Text>
           </View>
 
-          <TouchableOpacity
-            onPress={handleLogout}
-            style={styles.logoutBtn}
-          >
-            <Ionicons name="log-out-outline" size={26} color="#fff" />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              onPress={() => router.push("/settings")}
+              style={styles.settingsBtn}
+            >
+              <Ionicons name="settings-outline" size={26} color="#fff" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleLogout}
+              style={styles.logoutBtn}
+            >
+              <Ionicons name="log-out-outline" size={26} color="#fff" />
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -86,7 +119,46 @@ export default function Home() {
           <Text style={styles.cardLabel}>Total Debts</Text>
         </View>
       </View>
+
+      {/* Quick Export Hub */}
+      <View style={styles.quickExportCard}>
+        <View style={styles.exportHeader}>
+          <View style={styles.exportIconContainer}>
+            <Ionicons name="cloud-upload" size={24} color="#2563EB" />
+          </View>
+          <View style={styles.exportTitleContainer}>
+            <Text style={styles.exportTitle}>Instant Excel Export</Text>
+            <Text style={styles.exportSubtitle}>
+              Secure your records by exporting directly to Microsoft Excel or Sheets.
+            </Text>
+          </View>
+        </View>
+
+        <TouchableOpacity 
+          style={styles.exportBtn} 
+          onPress={handleExportData}
+          disabled={exporting}
+        >
+          {exporting ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <>
+              <Ionicons name="share-social-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.exportBtnText}>Export All Debts (Excel)</Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.manageBtn}
+          onPress={() => router.push("/settings")}
+        >
+          <Text style={styles.manageBtnText}>Manage Automated Backups</Text>
+          <Ionicons name="arrow-forward" size={14} color="#2563EB" />
+        </TouchableOpacity>
+      </View>
     </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -113,6 +185,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
+  },
+
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+
+  settingsBtn: {
+    padding: 6,
   },
 
   logoutBtn: {
@@ -164,5 +246,87 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#6B7280",
     marginTop: 6,
+  },
+
+  quickExportCard: {
+    backgroundColor: "#FFFFFF",
+    marginHorizontal: 24,
+    marginTop: 24,
+    padding: 20,
+    borderRadius: 24,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    elevation: 4,
+  },
+
+  exportHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+
+  exportIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#EFF6FF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 14,
+  },
+
+  exportTitleContainer: {
+    flex: 1,
+  },
+
+  exportTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#111827",
+  },
+
+  exportSubtitle: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 2,
+    lineHeight: 16,
+  },
+
+  exportBtn: {
+    flexDirection: "row",
+    backgroundColor: "#2563EB",
+    paddingVertical: 14,
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    shadowColor: "#2563EB",
+    shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 6,
+    elevation: 2,
+  },
+
+  exportBtnText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+
+  manageBtn: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 16,
+    gap: 4,
+    paddingVertical: 4,
+  },
+
+  manageBtnText: {
+    color: "#2563EB",
+    fontSize: 13,
+    fontWeight: "600",
   },
 });

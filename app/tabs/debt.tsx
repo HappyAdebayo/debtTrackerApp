@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, FlatList, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function Debts() {
   const [debts, setDebts] = useState<Debt[]>([]);
@@ -84,7 +85,7 @@ const deleteDebt = async (id: string, name: string) => {
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
 
       {/* Header */}
       <View style={styles.header}>
@@ -150,7 +151,7 @@ const deleteDebt = async (id: string, name: string) => {
         onAdd={addDebt}
         cName={editingCustomer ?? undefined}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 

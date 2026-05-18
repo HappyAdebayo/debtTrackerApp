@@ -1,5 +1,6 @@
 import { StatusBar, StyleSheet, Text, View } from "react-native";
 import { Redirect} from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useEffect,useState } from "react";
 import { getSession } from "@/lib/authStorage";
 
@@ -29,7 +30,7 @@ export default function Index() {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
          <StatusBar backgroundColor={PRIMARY} barStyle="light-content" />
    
          <View style={styles.logo}>
@@ -44,7 +45,7 @@ export default function Index() {
            <View style={styles.chip}><Text style={styles.chipText}>Fast</Text></View>
            <View style={styles.chip}><Text style={styles.chipText}>Simple</Text></View>
          </View>
-    </View>
+    </SafeAreaView>
   );
 }
 

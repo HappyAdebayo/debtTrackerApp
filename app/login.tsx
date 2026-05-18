@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, StatusBar, KeyboardAvoidingView, Platform, } from "react-native";
+import { View, Text, StyleSheet, TextInput, Pressable, StatusBar, KeyboardAvoidingView, Platform, Modal } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { setSession,getUsers } from "@/lib/authStorage";
+import { Ionicons } from "@expo/vector-icons";
 
 const PRIMARY = "#2563EB";
 
@@ -10,6 +12,8 @@ export default function Login() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [modalVisible, setModalVisible] = useState(false);
+  const [unverifiedEmail, setUnverifiedEmail] = useState("");
 
   const handleLogin = async () => {
     const users = await getUsers();
@@ -23,16 +27,59 @@ export default function Login() {
       return;
     }
 
+    if (user.isVerified === false) {
+      setUnverifiedEmail(user.email);
+      setModalVisible(true);
+      return;
+    }
+
     await setSession(user);
     router.replace("/tabs/home");
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#FFFFFF" }}>
+      <KeyboardAvoidingView
+        style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <StatusBar backgroundColor="#FFFFFF" barStyle="dark-content" />
+
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalIconContainer}>
+              <Ionicons name="warning-outline" size={48} color="#EF4444" />
+            </View>
+            <Text style={styles.modalTitle}>Account Not Verified</Text>
+            <Text style={styles.modalText}>
+              Your account is not verified yet. Please enter the verification code to activate your account.
+            </Text>
+            <View style={styles.modalButtons}>
+              <Pressable
+                style={[styles.modalBtn, { backgroundColor: PRIMARY }]}
+                onPress={() => {
+                  setModalVisible(false);
+                  router.push(`/verify-signup?email=${encodeURIComponent(unverifiedEmail)}`);
+                }}
+              >
+                <Text style={styles.modalBtnText}>Verify Now</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtn, { backgroundColor: "#9CA3AF", marginTop: 8 }]}
+                onPress={() => setModalVisible(false)}
+              >
+                <Text style={styles.modalBtnText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Text style={styles.title}>Welcome back</Text>
       <Text style={styles.subtitle}>Login to continue</Text>
@@ -68,6 +115,7 @@ export default function Login() {
         </Pressable>
       </View>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -120,5 +168,63 @@ const styles = StyleSheet.create({
   linkBold: {
     color: PRIMARY,
     fontWeight: "700",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
+  modalContent: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 24,
+    width: "100%",
+    maxWidth: 340,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  modalIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "#FEE2E2",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#1F2937",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  modalText: {
+    fontSize: 14,
+    color: "#4B5563",
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  modalButtons: {
+    width: "100%",
+  },
+  modalBtn: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+  },
+  modalBtnText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 15,
   },
 });

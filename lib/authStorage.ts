@@ -8,6 +8,8 @@ export type User = {
   businessName: string;
   email: string;
   password: string;
+  isVerified?: boolean;
+  verificationCode?: string;
 };
 
 export async function getUsers(): Promise<User[]> {

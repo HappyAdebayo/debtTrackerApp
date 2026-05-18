@@ -9,9 +9,9 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { getUsers, saveUsers, setSession, User } from "@/lib/authStorage";
-import { v4 as uuidv4 } from "uuid"; // 
 
 const PRIMARY = "#2563EB";
 
@@ -36,25 +36,31 @@ export default function Signup() {
       return;
     }
 
+    const verificationCode = Math.floor(1000 + Math.random() * 9000).toString();
+
     // ✅ Generate a unique id for the new user
     const newUser: User = {
-      id: uuidv4(),
+      id: Date.now().toString(),
       businessName,
       email,
       password,
+      isVerified: false,
+      verificationCode,
     };
 
     await saveUsers([...users, newUser]);
-    await setSession(newUser); // ✅ pass full user object
+    
+    alert(`Simulation: Your verification code is ${verificationCode}`);
 
-    router.replace("/tabs/home"); // ✅ navigate to your tabbed home
+    router.replace(`/verify-signup?email=${encodeURIComponent(email)}`);
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#FFFFFF" }}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
       <StatusBar backgroundColor="#FFFFFF" barStyle="dark-content" />
 
       <Text style={styles.title}>Create Account</Text>
@@ -91,6 +97,7 @@ export default function Signup() {
         </Pressable>
       </View>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

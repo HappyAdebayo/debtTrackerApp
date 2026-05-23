@@ -60,6 +60,12 @@ export default function Login() {
 
       console.log("Login response:", response.data);
 
+      if (!token) {
+        throw new Error("Login succeeded but no auth token was returned.");
+      }
+
+      const authToken = token;
+
       const formattedUser = {
         id: user.id,
         email: user.email,
@@ -89,7 +95,7 @@ export default function Login() {
 
         let cloudTransactions: any[] | null = null;
         try {
-          const backupResponse = await apiRestoreBackup(token);
+          const backupResponse = await apiRestoreBackup(authToken);
           const backupList = backupResponse?.data?.backupData?.data || [];
           const actualBackupList = Array.isArray(backupList) ? backupList : [];
 

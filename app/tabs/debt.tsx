@@ -2,14 +2,16 @@ import AddDebtModal from "@/components/AddDebtModal";
 import { addDebt as addDebtToStorage, Debt, getUserDebts, saveDebts } from "@/lib/debtStorage";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
-import { Alert, FlatList, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { Alert, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function Debts() {
   const [debts, setDebts] = useState<Debt[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchVisible, setSearchVisible] = useState(false);
 
   const router = useRouter();
 
@@ -79,6 +81,12 @@ const deleteDebt = async (id: string, name: string) => {
   await loadDebts();
 };
 
+    const filteredDebts = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return debts;
+    return debts.filter((debt) => debt.name.toLowerCase().includes(query));
+  }, [debts, searchQuery]);
+
   const totalDebt = debts.reduce(
     (sum, d) => sum + d.amount.reduce((aSum, a) => aSum + a.amount, 0),
     0
@@ -88,13 +96,44 @@ const deleteDebt = async (id: string, name: string) => {
     <SafeAreaView style={styles.container}>
 
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Customers Debt</Text>
+      <View style={styles.headerRow}>
+        <View>
+          <Text style={styles.headerTitle}>Customers Debt</Text>
+          <Text style={styles.headerSubtitle}>{debts.length} customer{debts.length === 1 ? "" : "s"}</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.searchButton}
+          onPress={() => {
+            setSearchVisible((prev) => {
+              if (prev) {
+                setSearchQuery("");
+              }
+              return !prev;
+            });
+          }}
+        >
+          <Ionicons name={searchVisible ? "close" : "search"} size={22} color="#2563EB" />
+        </TouchableOpacity>
       </View>
+
+      {searchVisible && (
+        <View style={styles.searchContainer}>
+          <Ionicons name="search" size={18} color="#6B7280" style={{ marginRight: 8 }} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search debtors"
+            placeholderTextColor="#9CA3AF"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+        </View>
+      )}
 
       {/* List */}
       <FlatList
-        data={debts}
+        data={filteredDebts}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <TouchableOpacity
@@ -158,22 +197,51 @@ const deleteDebt = async (id: string, name: string) => {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F3F4F6", padding: 16 },
 
-  header: {
-    marginBottom: 16,
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
     paddingVertical: 8,
-    borderBottomWidth: 3,
+    borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
   },
-  headerTitle: { fontSize: 20, fontWeight: "800", color: "#6B7280" },
+  headerTitle: { fontSize: 22, fontWeight: "800", color: "#111827" },
+  headerSubtitle: { marginTop: 2, fontSize: 13, color: "#6B7280", maxWidth: 220 },
+  searchButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#EFF6FF",
+  },
+  searchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingHorizontal: 12,
+    height: 44,
+    marginBottom: 14,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: "#111827",
+    height: 42,
+  },
 
   item: {
     flexDirection: "row",
     justifyContent: "space-between",
-    padding: 16,
-    backgroundColor: "#FFF",
-    borderRadius: 12,
-    marginBottom: 12,
     alignItems: "center",
+    padding: 16,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    marginBottom: 12,
   },
   itemInfo: { flex: 1 },
   name: { fontSize: 18, fontWeight: "700", color: "#111827" },

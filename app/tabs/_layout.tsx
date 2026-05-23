@@ -1,10 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { AppState, AppStateStatus, View, Text, StyleSheet, Animated, Easing } from "react-native";
+import {
+  AppState,
+  AppStateStatus,
+  View,
+  Modal,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  Animated,
+  Easing,
+} from "react-native";
 import { Tabs, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { getSession, setSession, clearSession } from "@/lib/authStorage";
-import { checkAndTriggerAutoBackup } from "@/lib/backupService";
-import { apiRefreshToken } from "@/lib/api";
+import { isBackupDue, updateLastBackupTime, getBackupConfig } from "@/lib/backupService";
+import { apiRefreshToken, apiCreateBackup } from "@/lib/api";
+import { getUserDebts } from "@/lib/debtStorage";
 
 // Refresh the access token every 15 minutes
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
@@ -12,18 +23,34 @@ const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 export default function TabsLayout() {
   const router = useRouter();
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
-  const [isAutoBackingUp, setIsAutoBackingUp] = useState(false);
-  const slideAnim = useRef(new Animated.Value(80)).current;  // starts off-screen below
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupDone, setBackupDone] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const checkCountRef = useRef(0);
 
-  // Slide the toast in/out based on isAutoBackingUp
+  // Pulse animation for the cloud icon while backing up
   useEffect(() => {
-    Animated.timing(slideAnim, {
-      toValue: isAutoBackingUp ? 0 : 80,
-      duration: 350,
-      easing: Easing.out(Easing.back(1.5)),
-      useNativeDriver: true,
-    }).start();
-  }, [isAutoBackingUp]);
+    if (backingUp) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.25,
+            duration: 700,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 700,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [backingUp]);
 
   // ── Token Refresh ──────────────────────────────────────────────
   const refreshSession = async () => {
@@ -62,15 +89,63 @@ export default function TabsLayout() {
 
   // Run the scheduled auto-backup check silently
   const runAutoBackupCheck = async () => {
+    checkCountRef.current += 1;
+    const checkNum = checkCountRef.current;
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString("en-US", { hour12: false });
+
     try {
-      const triggered = await checkAndTriggerAutoBackup();
-      if (triggered) {
-        // Only show the toast if a backup was actually triggered
-        setIsAutoBackingUp(true);
-        setTimeout(() => setIsAutoBackingUp(false), 3000);
+      const config = await getBackupConfig();
+      const due = await isBackupDue();
+
+      console.log(
+        `[AutoBackup] ⏱ Check #${checkNum} at ${timeStr} | ` +
+        `enabled=${config.enabled} | ` +
+        `schedule=${config.frequency} @ ${config.time} | ` +
+        `due=${due}`
+      );
+
+      if (!due) {
+        console.log(`[AutoBackup] Check #${checkNum}: Not due yet — nothing to do.`);
+        return;
       }
+
+      // Get the auth token so we can call the cloud backup API
+      const session = await getSession();
+      if (!session?.token) {
+        console.warn(`[AutoBackup] Check #${checkNum}: No auth token found — skipping cloud backup.`);
+        return;
+      }
+
+      console.log(`[AutoBackup] Check #${checkNum}: ✅ Backup is due! Starting cloud backup now...`);
+
+      // Show the backing-up modal
+      setBackingUp(true);
+      setBackupDone(false);
+
+      // Compile the latest debt records
+      const debts = await getUserDebts();
+      console.log(`[AutoBackup] Backing up ${debts.length} customer record(s)...`);
+      const backupPayload = { transactions: debts };
+
+      // Call the same cloud API that the manual "Back Up Now" button uses
+      await apiCreateBackup(session.token, backupPayload);
+
+      // Record the timestamp so the schedule won't re-fire until tomorrow / next week
+      await updateLastBackupTime();
+
+      console.log(`[AutoBackup] ✅ Cloud backup completed successfully at ${new Date().toLocaleTimeString("en-US", { hour12: false })}.`);
+
+      // Show success state briefly, then hide
+      setBackupDone(true);
+      setTimeout(() => {
+        setBackingUp(false);
+        setBackupDone(false);
+      }, 2500);
     } catch (e) {
-      console.error("Auto backup check failed:", e);
+      console.error(`[AutoBackup] Check #${checkNum}: ❌ Auto backup failed:`, e);
+      setBackingUp(false);
+      setBackupDone(false);
     }
   };
 
@@ -90,11 +165,16 @@ export default function TabsLayout() {
     refreshSession();
     runAutoBackupCheck();
 
-    // Then repeat every 15 minutes while the app is open
-    const interval = setInterval(refreshSession, REFRESH_INTERVAL_MS);
+    // Refresh token every 15 minutes while the app is open
+    const tokenInterval = setInterval(refreshSession, REFRESH_INTERVAL_MS);
+
+    // Check auto-backup schedule every 60 seconds so it fires at the
+    // configured time even when the app is already open in the foreground.
+    const backupInterval = setInterval(runAutoBackupCheck, 60 * 1000);
 
     return () => {
-      clearInterval(interval);
+      clearInterval(tokenInterval);
+      clearInterval(backupInterval);
       subscription.remove();
     };
   }, []);
@@ -127,48 +207,139 @@ export default function TabsLayout() {
         />
       </Tabs>
 
-      {/* ── Auto-Backup Toast ── */}
-      <Animated.View
-        style={[
-          toastStyles.toast,
-          { transform: [{ translateY: slideAnim }] },
-        ]}
-        pointerEvents="none"
+      {/* ── Auto-Backup Progress Modal ── */}
+      <Modal
+        transparent
+        animationType="fade"
+        visible={backingUp}
+        statusBarTranslucent
       >
-        <View style={toastStyles.dot} />
-        <Text style={toastStyles.text}>Auto-backup saved ✓</Text>
-      </Animated.View>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            {backupDone ? (
+              <>
+                <View style={styles.successCircle}>
+                  <Ionicons name="checkmark" size={36} color="#FFFFFF" />
+                </View>
+                <Text style={styles.modalTitle}>Backup Complete!</Text>
+                <Text style={styles.modalSubtitle}>
+                  Your data has been securely saved to the cloud.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Animated.View
+                  style={[
+                    styles.cloudCircle,
+                    { transform: [{ scale: pulseAnim }] },
+                  ]}
+                >
+                  <Ionicons name="cloud-upload" size={36} color="#FFFFFF" />
+                </Animated.View>
+                <Text style={styles.modalTitle}>Backing Up…</Text>
+                <Text style={styles.modalSubtitle}>
+                  Saving your records to the cloud. Please don't close the app.
+                </Text>
+                <ActivityIndicator
+                  size="small"
+                  color="#2563EB"
+                  style={{ marginTop: 16 }}
+                />
+                <View style={styles.progressBarBg}>
+                  <Animated.View
+                    style={[
+                      styles.progressBarFill,
+                      {
+                        width: pulseAnim.interpolate({
+                          inputRange: [1, 1.25],
+                          outputRange: ["40%", "90%"],
+                        }),
+                      },
+                    ]}
+                  />
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-const toastStyles = StyleSheet.create({
-  toast: {
-    position: "absolute",
-    bottom: 72, // sits just above the tab bar
-    alignSelf: "center",
-    flexDirection: "row",
+const styles = StyleSheet.create({
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.55)",
+    justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#1E3A5F",
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 24,
-    gap: 8,
+    paddingHorizontal: 32,
+  },
+  modalCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 28,
+    paddingVertical: 36,
+    paddingHorizontal: 28,
+    alignItems: "center",
+    width: "100%",
     shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 8,
+    shadowOpacity: 0.18,
+    shadowOffset: { width: 0, height: 10 },
+    shadowRadius: 24,
+    elevation: 16,
+  },
+  cloudCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "#2563EB",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+    shadowColor: "#2563EB",
+    shadowOpacity: 0.35,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 14,
     elevation: 8,
   },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#34D399",
+  successCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "#16A34A",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+    shadowColor: "#16A34A",
+    shadowOpacity: 0.35,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 14,
+    elevation: 8,
   },
-  text: {
-    color: "#FFFFFF",
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#111827",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  modalSubtitle: {
     fontSize: 13,
-    fontWeight: "600",
+    color: "#6B7280",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  progressBarBg: {
+    width: "100%",
+    height: 6,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 6,
+    overflow: "hidden",
+    marginTop: 12,
+  },
+  progressBarFill: {
+    height: 6,
+    backgroundColor: "#2563EB",
+    borderRadius: 6,
   },
 });

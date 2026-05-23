@@ -15,6 +15,9 @@ export default function Home() {
   const [checking, setChecking] = useState(true);
   const [exporting, setExporting] = useState(false);
 
+  const activeDebts = debts.slice(0, 3);
+  const remainingDebtors = debts.length > 3 ? debts.length - 3 : 0;
+
   const handleExportData = async () => {
     try {
       setExporting(true);
@@ -110,7 +113,7 @@ export default function Home() {
         <View style={styles.statsRow}>
           <View style={styles.card}>
             <Text style={styles.cardNumber}>{peopleCount}</Text>
-            <Text style={styles.cardLabel}>People Owing</Text>
+            <Text style={styles.cardLabel}>Debtors</Text>
           </View>
 
           <View style={styles.card}>
@@ -144,7 +147,7 @@ export default function Home() {
               </TouchableOpacity>
             </View>
           ) : (
-            debts.map((item) => {
+            activeDebts.map((item) => {
               const customerTotal = item.amount.reduce((sum, a) => sum + a.amount, 0);
               const initials = item.name.substring(0, 2).toUpperCase();
               
@@ -176,6 +179,7 @@ export default function Home() {
               );
             })
           )}
+         
         </View>
 
         {/* Quick Export Hub */}
@@ -285,7 +289,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   cardNumber: {
-    fontSize: 20,
+    fontSize: 15,
     fontWeight: "800",
     color: "#111827",
   },

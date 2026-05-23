@@ -24,22 +24,22 @@ export default function AmountModal({ visible, action,currentDebt = 0, onClose, 
   const [description, setDescription] = useState<string>("");
   const [image, setImage] = useState<string>("");
 
-  const pickImage = async () => {
-    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permissionResult.granted) {
-      Alert.alert("Permission denied", "You need to allow access to your photos.");
-      return;
-    }
+  // const pickImage = async () => {
+  //   const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  //   if (!permissionResult.granted) {
+  //     Alert.alert("Permission denied", "You need to allow access to your photos.");
+  //     return;
+  //   }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
-    });
+  //   const result = await ImagePicker.launchImageLibraryAsync({
+  //     mediaTypes: ImagePicker.MediaTypeOptions.Images,
+  //     quality: 0.7,
+  //   });
 
-    if (!result.canceled) {
-      setImage(result.assets[0].uri);
-    }
-  };
+  //   if (!result.canceled) {
+  //     setImage(result.assets[0].uri);
+  //   }
+  // };
 
   const handleSubmit = () => {
     const amt = Number(amount);
@@ -82,7 +82,7 @@ export default function AmountModal({ visible, action,currentDebt = 0, onClose, 
             onChangeText={setDescription}
           />
 
-          <Pressable style={[styles.imagePicker]} onPress={pickImage}>
+          {/* <Pressable style={[styles.imagePicker]} onPress={pickImage}>
             {image ? (
                 <Image
                 source={{ uri: image }}
@@ -102,7 +102,7 @@ export default function AmountModal({ visible, action,currentDebt = 0, onClose, 
               style={{ width: 100, height: 100, alignSelf: "center", marginBottom: 12, borderRadius: 8 }}
               resizeMode="cover"
             />
-          ) : null}
+          ) : null} */}
 
           <View style={styles.modalButtons}>
             <Pressable style={[styles.modalBtn, { backgroundColor: "#2563EB" }]} onPress={handleSubmit}>

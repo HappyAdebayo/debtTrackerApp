@@ -53,16 +53,6 @@ const getPickerDate = (timeStr: string): Date => {
 
   const now = new Date();
 
-console.log(now);
-const date = new Date();
-
-console.log(
-  date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  })
-);
 // Returns a human-friendly backup time: "Today at 2:30 PM", "Yesterday at …", or "22 May 2026 at 10:00 PM"
 const formatLastBackupTime = (isoString: string): string => {
   if (!isoString) return "Never";
@@ -528,13 +518,13 @@ export default function Settings() {
 
               {/* Time Selector (Native Date/Time Picker) */}
               <View style={styles.timePickerContainer}>
-                <Text style={styles.optionsLabel}>Trigger Hour</Text>
+                <Text style={styles.optionsLabel}>Backup Time</Text>
                 {Platform.OS === "ios" ? (
                   <View style={{ alignItems: "flex-start", marginTop: 4 }}>
                     <DateTimePicker
                       value={getPickerDate(backupConfig.time)}
                       mode="time"
-                      is24Hour={true}
+                      is24Hour={false}
                       onChange={handleTimeChange}
                       themeVariant="light"
                     />
@@ -545,14 +535,14 @@ export default function Settings() {
                       style={styles.timeSelector}
                       onPress={() => setShowTimePicker(true)}
                     >
-                      <Text style={styles.timeSelectorText}>{backupConfig.time}</Text>
+                      <Text style={styles.timeSelectorText}>{formatTime12Hour(backupConfig.time)}</Text>
                       <Ionicons name="time-outline" size={18} color="#6B7280" />
                     </TouchableOpacity>
                     {showTimePicker && (
                       <DateTimePicker
                         value={getPickerDate(backupConfig.time)}
                         mode="time"
-                        is24Hour={true}
+                        is24Hour={false}
                         display="default"
                         onChange={handleTimeChange}
                       />
@@ -634,9 +624,9 @@ export default function Settings() {
         </View>
 
         {/* Section: Danger Zone */}
-        <Text style={[styles.sectionHeader, { color: DANGER }]}>Danger Zone</Text>
+        {/* <Text style={[styles.sectionHeader, { color: DANGER }]}>Danger Zone</Text> */}
 
-        <View style={styles.actionsCard}>
+        {/* <View style={styles.actionsCard}>
           <Text style={styles.actionsCardDesc}>
             Erase all locally stored customer debt records and transaction history from this device to start fresh. This action does not affect your online cloud backups.
           </Text>
@@ -655,7 +645,7 @@ export default function Settings() {
               </>
             )}
           </TouchableOpacity>
-        </View>
+        </View> */}
       </ScrollView>
 
       {/* ── Backup Loading Overlay ── */}

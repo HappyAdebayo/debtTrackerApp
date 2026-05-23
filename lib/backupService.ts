@@ -7,7 +7,8 @@ import { getDebts, saveDebts } from "./debtStorage";
 const DEBTS_KEY = "dt_debts";
 const USERS_KEY = "dt_users";
 const BACKUP_CONFIG_KEY = "dt_backup_config";
-const LAST_BACKUP_TIME_KEY = "dt_last_backup_time";
+const LAST_BACKUP_TIME_KEY = "dt_last_backup_time"; // For display only (manual & scheduled)
+const LAST_SCHEDULED_BACKUP_TIME_KEY = "dt_last_scheduled_backup_time"; // Tracks scheduled backups only
 
 const BACKUP_DIR = FileSystem.documentDirectory + "backups/";
 
@@ -198,9 +199,12 @@ export async function performSilentBackup(): Promise<string> {
 
     await FileSystem.writeAsStringAsync(fileUri, jsonStr);
 
-    // Save last backup time
+    // Save BOTH timestamps:
+    // 1. LAST_BACKUP_TIME_KEY for display in UI (shows any backup, manual or scheduled)
+    // 2. LAST_SCHEDULED_BACKUP_TIME_KEY for scheduling logic (prevents duplicate scheduled backups)
     const nowStr = new Date().toISOString();
     await AsyncStorage.setItem(LAST_BACKUP_TIME_KEY, nowStr);
+    await AsyncStorage.setItem(LAST_SCHEDULED_BACKUP_TIME_KEY, nowStr);
 
     // Clean up old backups: Keep only the 5 most recent
     await cleanOldLocalBackups();
@@ -290,52 +294,93 @@ export async function deleteLocalBackupFile(uri: string): Promise<void> {
   await FileSystem.deleteAsync(uri, { idempotent: true });
 }
 
-// 10. Check if an auto-backup is currently due based on schedule
-export async function checkAndTriggerAutoBackup(): Promise<boolean> {
+// 10. Check if a scheduled auto-backup is due right now.
+// Uses calendar-date comparison (not hours elapsed) so a manual backup
+// earlier in the day does NOT block the scheduled backup from firing.
+export async function isBackupDue(): Promise<boolean> {
   try {
     const config = await getBackupConfig();
-    if (!config.enabled) return false;
 
-    const lastBackupStr = await getLastBackupTime();
+    if (!config.enabled) {
+      console.log("[isBackupDue] Auto-backup is DISABLED in settings → not due.");
+      return false;
+    }
+
     const now = new Date();
-
-    const currentDayOfWeek = now.getDay(); // 0-6
-    const currentHour = now.getHours(); // 0-23
+    const currentDayOfWeek = now.getDay();
+    const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
 
     const [schedHour, schedMin] = config.time.split(":").map(Number);
+
+    // Has the scheduled clock time been reached today?
     const isTimePassed =
       currentHour > schedHour || (currentHour === schedHour && currentMinute >= schedMin);
 
-    let isDue = false;
+    console.log(
+      `[isBackupDue] Now=${currentHour}:${String(currentMinute).padStart(2,"0")} | ` +
+      `Scheduled=${schedHour}:${String(schedMin).padStart(2,"0")} | ` +
+      `isTimePassed=${isTimePassed}`
+    );
 
-    if (!lastBackupStr) {
-      // Never backed up before, trigger immediately
-      isDue = true;
-    } else {
-      const lastBackup = new Date(lastBackupStr);
-      const msDiff = now.getTime() - lastBackup.getTime();
-      const daysDiff = msDiff / (24 * 60 * 60 * 1000);
+    if (!isTimePassed) {
+      console.log("[isBackupDue] Scheduled time not reached yet → not due.");
+      return false;
+    }
 
-      if (config.frequency === "daily") {
-        // Due if at least 18 hours passed (prevents double triggers on same day) AND sched time passed
-        isDue = daysDiff >= 0.75 && isTimePassed;
-      } else {
-        // Weekly: Due if correct day of week, at least 6 days passed, and sched time passed
-        isDue = currentDayOfWeek === config.dayOfWeek && daysDiff >= 6 && isTimePassed;
+    const lastBackupStr = await getLastBackupTime();
+    console.log(`[isBackupDue] Last backup timestamp: ${lastBackupStr ?? "(never)"}`);
+
+    if (config.frequency === "daily") {
+      // Check SCHEDULED backup history, not manual backup history
+      const lastScheduledStr = await AsyncStorage.getItem(LAST_SCHEDULED_BACKUP_TIME_KEY);
+      if (!lastScheduledStr) {
+        console.log("[isBackupDue] Never backed up (scheduled) before → DUE NOW.");
+        return true;
       }
+      const lastScheduled = new Date(lastScheduledStr);
+      const sameDay = lastScheduled.toDateString() === now.toDateString();
+      console.log(
+        `[isBackupDue] Last scheduled backup date: ${lastScheduled.toDateString()} | ` +
+        `Today: ${now.toDateString()} | ` +
+        `sameDay=${sameDay} → due=${!sameDay}`
+      );
+      // Due if the last SCHEDULED backup was on a DIFFERENT calendar day
+      return !sameDay;
+    } else {
+      // Weekly: must be the correct day of the week
+      if (currentDayOfWeek !== config.dayOfWeek) {
+        console.log(
+          `[isBackupDue] Weekly — today is day ${currentDayOfWeek}, scheduled day is ${config.dayOfWeek} → not due.`
+        );
+        return false;
+      }
+      // Check SCHEDULED backup history
+      const lastScheduledStr = await AsyncStorage.getItem(LAST_SCHEDULED_BACKUP_TIME_KEY);
+      if (!lastScheduledStr) {
+        console.log("[isBackupDue] Weekly — correct day, never backed up (scheduled) → DUE NOW.");
+        return true;
+      }
+      const lastScheduled = new Date(lastScheduledStr);
+      const daysDiff = (now.getTime() - lastScheduled.getTime()) / (24 * 60 * 60 * 1000);
+      const due = daysDiff >= 6;
+      console.log(`[isBackupDue] Weekly — daysDiff=${daysDiff.toFixed(1)} → due=${due}`);
+      return due;
     }
-
-    if (isDue) {
-      await performSilentBackup();
-      return true;
-    }
-
-    return false;
   } catch (error) {
-    console.error("Error in checkAndTriggerAutoBackup:", error);
+    console.error("[isBackupDue] Error:", error);
     return false;
   }
+}
+
+// Legacy wrapper — kept for backward compatibility
+export async function checkAndTriggerAutoBackup(): Promise<boolean> {
+  const due = await isBackupDue();
+  if (due) {
+    await performSilentBackup();
+    return true;
+  }
+  return false;
 }
 
 // 11. Helper to update the last backup time externally

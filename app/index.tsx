@@ -3,18 +3,23 @@ import { Redirect} from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useEffect,useState } from "react";
 import { getSession } from "@/lib/authStorage";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const PRIMARY = "#2563EB"; 
 
 export default function Index() {
    const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<any>(null);
+  const [seenOnboarding, setSeenOnboarding] = useState(false);
 
   useEffect(() => {
 
   const check = async () => {
      const s = await getSession();
       setSession(s);
+      
+      const seen = await AsyncStorage.getItem("@seen_onboarding");
+      setSeenOnboarding(seen === "true");
 
     setTimeout(() => {
         setLoading(false);
@@ -26,7 +31,13 @@ export default function Index() {
 
 
  if (!loading) {
-    return <Redirect href={session ? "/tabs/home" : "/login"} />;
+    if (session) {
+      return <Redirect href="/tabs/home" />;
+    } else if (seenOnboarding) {
+      return <Redirect href="/login" />;
+    } else {
+      return <Redirect href="/onboarding" />;
+    }
   }
 
   return (

@@ -9,6 +9,9 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  Modal,
+  Animated,
+  Easing,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -22,7 +25,10 @@ import {
   updateLastBackupTime,
   BackupConfig,
 } from "@/lib/backupService";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { apiCreateBackup, apiRestoreBackup } from "@/lib/api";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { getUserDebts, saveDebts, clearUserDebts } from "@/lib/debtStorage";
 
 const PRIMARY = "#2563EB";
 const PRIMARY_LIGHT = "#EFF6FF";
@@ -45,14 +51,100 @@ const getPickerDate = (timeStr: string): Date => {
   return d;
 };
 
+  const now = new Date();
+
+console.log(now);
+const date = new Date();
+
+console.log(
+  date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  })
+);
+// Returns a human-friendly backup time: "Today at 2:30 PM", "Yesterday at …", or "22 May 2026 at 10:00 PM"
+const formatLastBackupTime = (isoString: string): string => {
+  if (!isoString) return "Never";
+  const backupDate = new Date(isoString);
+  if (isNaN(backupDate.getTime())) return "Never";
+  const now = new Date();
+
+  // Format time manually to bypass React Native / Hermes engine locale limitations
+  const hoursNum = backupDate.getHours();
+  const minutesNum = backupDate.getMinutes();
+  const ampm = hoursNum >= 12 ? "PM" : "AM";
+  const displayHours = hoursNum % 12 || 12;
+  const displayMinutes = minutesNum.toString().padStart(2, "0");
+  const timeStr = `${displayHours}:${displayMinutes} ${ampm}`;
+
+  // Format date manually
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const day = backupDate.getDate();
+  const month = months[backupDate.getMonth()];
+  const year = backupDate.getFullYear();
+  const dateStr = `${day} ${month} ${year}`;
+
+  if (backupDate.toDateString() === now.toDateString()) {
+    return `Today at ${timeStr}`;
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (backupDate.toDateString() === yesterday.toDateString()) {
+    return `Yesterday at ${timeStr}`;
+  }
+
+  return `${dateStr} at ${timeStr}`;
+};
+
+// Formats a "HH:MM" 24-hour string to 12-hour string with AM/PM
+const formatTime12Hour = (time24: string): string => {
+  if (!time24) return "Not set";
+  const [hoursStr, minutesStr] = time24.split(":");
+  const hours = parseInt(hoursStr, 10);
+  if (isNaN(hours)) return time24;
+  const ampm = hours >= 12 ? "PM" : "AM";
+  const displayHours = hours % 12 || 12;
+  return `${displayHours}:${minutesStr} ${ampm}`;
+};
+
+
 export default function Settings() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [backingUp, setBackingUp] = useState(false);
 
+  // Animated pulse for the cloud icon in the backup overlay
+  const pulseAnim = React.useRef(new Animated.Value(1)).current;
+
+  React.useEffect(() => {
+    if (backingUp) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.18,
+            duration: 700,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 700,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [backingUp]);
+
   // User Profile
   const [businessName, setBusinessName] = useState("");
   const [email, setEmail] = useState("");
+  const [token, setToken] = useState<string | null>(null);
 
   // Backup Configuration States
   const [backupConfig, setBackupConfig] = useState<BackupConfig>({
@@ -65,6 +157,7 @@ export default function Settings() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const handleTimeChange = (event: any, selectedDate?: Date) => {
     if (Platform.OS === "android") {
@@ -88,13 +181,18 @@ export default function Settings() {
       const session = await getSession();
       if (session) {
         setEmail(session.email);
-        // Look up business name if available (we will parse dt_users to find matching email)
-        const rawUsers = await getUsers();
-        const userObj = rawUsers.find((u: any) => u.email === session.email);
-        if (userObj) {
-          setBusinessName(userObj.businessName);
+        setToken(session.token || null);
+        if (session.businessName) {
+          setBusinessName(session.businessName);
         } else {
-          setBusinessName("Business Owner");
+          // Look up business name if available (we will parse dt_users to find matching email)
+          const rawUsers = await getUsers();
+          const userObj = rawUsers.find((u: any) => u.email === session.email);
+          if (userObj) {
+            setBusinessName(userObj.businessName);
+          } else {
+            setBusinessName("Business Owner");
+          }
         }
       }
 
@@ -116,16 +214,37 @@ export default function Settings() {
     const newConfig = { ...backupConfig, ...updated };
     setBackupConfig(newConfig);
     await saveBackupConfig(newConfig);
+
+    // When the user enables auto-backup, immediately run a backup
+    // so they get instant confirmation the feature works.
+    if (updated.enabled === true) {
+      setTimeout(() => {
+        handleLocalBackup();
+      }, 400);
+    }
   };
 
-  // Trigger simulated online backup
+  // Trigger online cloud backup
   const handleLocalBackup = async () => {
+    if (!token) {
+      Alert.alert("Authentication Required", "Please log in again to back up your data.");
+      return;
+    }
+
     try {
       setBackingUp(true);
-      // Simulate 1.5s online cloud database communication
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      // Compile backup data
+      const debts = await getUserDebts();
+
+      const backupPayload = {
+        transactions: debts,
+      };
+
+      // Call backend API
+      await apiCreateBackup(token, backupPayload);
       
-      // Save backup timestamp
+      // Save backup timestamp locally
       const nowStr = await updateLastBackupTime();
       setLastBackupTime(nowStr);
 
@@ -133,9 +252,12 @@ export default function Settings() {
         "Backup Success",
         "Your customer debts and configurations have been successfully backed up to your secure online cloud database!"
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error("Online backup error:", err);
-      Alert.alert("Backup Failed", "Unable to establish connection to online database.");
+      Alert.alert(
+        "Backup Failed",
+        err.message || "Unable to establish connection to online database."
+      );
     } finally {
       setBackingUp(false);
     }
@@ -160,8 +282,13 @@ export default function Settings() {
     }
   };
 
-  // Trigger simulated online restore
+  // Trigger online cloud restore
   const handleRestoreBackup = async () => {
+    if (!token) {
+      Alert.alert("Authentication Required", "Please log in again to restore your data.");
+      return;
+    }
+
     Alert.alert(
       "Confirm Cloud Restore",
       "Restoring from your online cloud backup will overwrite your current device data with your last saved database records. This cannot be undone.\n\nAre you sure you want to proceed?",
@@ -173,18 +300,96 @@ export default function Settings() {
           onPress: async () => {
             try {
               setRestoring(true);
-              // Simulate 1.5s online cloud database download
-              await new Promise((resolve) => setTimeout(resolve, 1500));
+              
+              // Fetch latest backup from backend
+              const response = await apiRestoreBackup(token);
+              // Support multiple nested response shapes from the backend
+              const backupList =
+                response?.data?.backupData?.data ||
+                [];
+              
+              const actualBackupList = Array.isArray(backupList) ? backupList : [];
+
+              if (actualBackupList.length === 0) {
+                Alert.alert("No Backup Found", "You do not have any saved cloud backups to restore from.");
+                return;
+              }
+
+              // Extract data from the most recent backup
+              const latestBackup = actualBackupList[0];
+              const backupPayload = latestBackup?.data || latestBackup || null;
+
+              if (!backupPayload) {
+                console.log(backupPayload);
+                
+                Alert.alert("Restore Failed", "The latest cloud backup data is empty or corrupt.");
+                return;
+              }
+
+              // Extract user and transactions with support for multiple formats
+              // const user =
+              //   backupPayload.user ||
+              //   backupPayload.data?.users ||
+              //   backupPayload.users ||
+              //   [];
+              const transactions =
+                backupPayload.transactions ||
+                backupPayload.data?.debts ||
+                backupPayload.debts ||
+                [];
+
+              // Save tables to SQLite
+              if (Array.isArray(transactions)) {
+                await saveDebts(transactions);
+              }
+              // if (Array.isArray(user)) {
+              //   await AsyncStorage.setItem("dt_users", JSON.stringify(user));
+              // }
 
               Alert.alert(
                 "Restore Success",
                 "Your customer debts and configurations have been successfully restored from your secure online cloud backup!"
               );
-            } catch (err) {
+            } catch (err: any) {
               console.error("Online restore error:", err);
-              Alert.alert("Restore Failed", "Unable to establish connection to online backup.");
+              Alert.alert(
+                "Restore Failed",
+                err.message || "Unable to establish connection to online backup."
+              );
             } finally {
               setRestoring(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleClearLocalData = () => {
+    Alert.alert(
+      "Confirm Clear Local Data",
+      "Are you sure you want to delete all customer debt records and transactions from this device? This will erase all local records and cannot be undone.\n\nAre you sure you want to proceed?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Yes, Delete Everything",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setClearing(true);
+              await clearUserDebts();
+              Alert.alert(
+                "Data Cleared",
+                "All customer debt records and transactions have been successfully cleared from this device!"
+              );
+            } catch (err: any) {
+              console.error("Clear local data error:", err);
+              Alert.alert(
+                "Clear Failed",
+                err.message || "Unable to delete local records."
+              );
+            } finally {
+              setClearing(false);
             }
           },
         },
@@ -365,7 +570,7 @@ export default function Settings() {
             <Text style={styles.lastBackupText}>
               Last backup:{" "}
               <Text style={{ fontWeight: "600", color: "#374151" }}>
-                {lastBackupTime ? new Date(lastBackupTime).toLocaleString() : "Never"}
+                {lastBackupTime ? formatLastBackupTime(lastBackupTime) : "Never"}
               </Text>
             </Text>
           </View>
@@ -427,7 +632,76 @@ export default function Settings() {
             )}
           </TouchableOpacity>
         </View>
+
+        {/* Section: Danger Zone */}
+        <Text style={[styles.sectionHeader, { color: DANGER }]}>Danger Zone</Text>
+
+        <View style={styles.actionsCard}>
+          <Text style={styles.actionsCardDesc}>
+            Erase all locally stored customer debt records and transaction history from this device to start fresh. This action does not affect your online cloud backups.
+          </Text>
+
+          <TouchableOpacity
+            style={styles.dangerButton}
+            onPress={handleClearLocalData}
+            disabled={backingUp || restoring || exporting || clearing}
+          >
+            {clearing ? (
+              <ActivityIndicator size="small" color={DANGER} />
+            ) : (
+              <>
+                <Ionicons name="trash-outline" size={20} color={DANGER} />
+                <Text style={styles.dangerButtonText}>Clear All Local Data</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
       </ScrollView>
+
+      {/* ── Backup Loading Overlay ── */}
+      <Modal
+        visible={backingUp}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+      >
+        <View style={styles.overlayBackdrop}>
+          <View style={styles.overlayCard}>
+            {/* Animated cloud icon */}
+            <Animated.View
+              style={[
+                styles.overlayIconRing,
+                { transform: [{ scale: pulseAnim }] },
+              ]}
+            >
+              <Ionicons name="cloud-upload" size={44} color={PRIMARY} />
+            </Animated.View>
+
+            <Text style={styles.overlayTitle}>Backing Up Your Data</Text>
+            <Text style={styles.overlaySubtitle}>
+              Securely syncing your customer records to the cloud.
+              Please keep the app open.
+            </Text>
+
+            <ActivityIndicator
+              size="large"
+              color={PRIMARY}
+              style={{ marginTop: 20 }}
+            />
+
+            <View style={styles.overlaySteps}>
+              <View style={styles.overlayStep}>
+                <Ionicons name="checkmark-circle" size={16} color="#10B981" />
+                <Text style={styles.overlayStepText}>Collecting debt records</Text>
+              </View>
+              <View style={styles.overlayStep}>
+                <Ionicons name="ellipse" size={10} color={PRIMARY} style={{ marginTop: 3 }} />
+                <Text style={styles.overlayStepText}>Uploading to secure cloud...</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -818,5 +1092,69 @@ const styles = StyleSheet.create({
   },
   backupItemBtn: {
     padding: 8,
+  },
+
+  // ── Backup Overlay ──
+  overlayBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 32,
+  },
+  overlayCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 32,
+    alignItems: "center",
+    width: "100%",
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  overlayIconRing: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: "#EFF6FF",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+    borderWidth: 2,
+    borderColor: "#BFDBFE",
+  },
+  overlayTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#111827",
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  overlaySubtitle: {
+    fontSize: 14,
+    color: "#6B7280",
+    textAlign: "center",
+    lineHeight: 22,
+  },
+  overlaySteps: {
+    marginTop: 24,
+    alignSelf: "stretch",
+    gap: 10,
+    backgroundColor: "#F9FAFB",
+    borderRadius: 12,
+    padding: 14,
+  },
+  overlayStep: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  overlayStepText: {
+    fontSize: 13,
+    color: "#374151",
+    fontWeight: "500",
+    flex: 1,
   },
 });

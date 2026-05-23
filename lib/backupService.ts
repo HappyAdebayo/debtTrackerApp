@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as DocumentPicker from "expo-document-picker";
+import { getDebts, saveDebts } from "./debtStorage";
 
 const DEBTS_KEY = "dt_debts";
 const USERS_KEY = "dt_users";
@@ -63,10 +64,8 @@ export async function getLastBackupTime(): Promise<string | null> {
 
 // 4. Compile all app database tables into our JSON schema
 async function compileBackupData(): Promise<BackupData> {
-  const debtsRaw = await AsyncStorage.getItem(DEBTS_KEY);
+  const debts = await getDebts();
   const usersRaw = await AsyncStorage.getItem(USERS_KEY);
-
-  const debts = debtsRaw ? JSON.parse(debtsRaw) : [];
   const users = usersRaw ? JSON.parse(usersRaw) : [];
 
   return {
@@ -83,23 +82,21 @@ async function compileBackupData(): Promise<BackupData> {
 // 5. Trigger a Manual Backup (Compiles debt data into CSV format and opens the Native Share Sheet for Excel)
 export async function triggerManualBackup(): Promise<boolean> {
   try {
-    const debtsRaw = await AsyncStorage.getItem(DEBTS_KEY);
-    const debts = debtsRaw ? JSON.parse(debtsRaw) : [];
+    const debts = await getDebts();
 
     // Create CSV content starting with UTF-8 Byte Order Mark (BOM)
     // This BOM guarantees that Excel parses Naira symbol (₦) and UTF-8 characters correctly.
     let csvContent = "\uFEFF";
-    csvContent += "Customer Name,Phone Number,Date,Amount,Description\n";
+    csvContent += "Customer Name,Date,Amount,Description\n";
 
     for (const debt of debts) {
       if (debt.amount && Array.isArray(debt.amount)) {
         for (const item of debt.amount) {
           const cleanName = (debt.name || "").replace(/"/g, '""');
-          const cleanPhone = (debt.phone || "").replace(/"/g, '""');
           const cleanDesc = (item.description || "").replace(/"/g, '""');
           const dateStr = item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "";
           
-          csvContent += `"${cleanName}","${cleanPhone}","${dateStr}",${item.amount},"${cleanDesc}"\n`;
+          csvContent += `"${cleanName}","${dateStr}",${item.amount},"${cleanDesc}"\n`;
         }
       }
     }
@@ -167,8 +164,8 @@ export async function restoreFromBackup(): Promise<{ success: boolean; message: 
       };
     }
 
-    // 4. Overwrite AsyncStorage with the imported tables
-    await AsyncStorage.setItem(DEBTS_KEY, JSON.stringify(debts));
+    // 4. Overwrite storage with the imported tables
+    await saveDebts(debts);
     await AsyncStorage.setItem(USERS_KEY, JSON.stringify(users));
 
     return {

@@ -11,7 +11,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { getUsers, saveUsers, setSession } from "@/lib/authStorage";
+import { setSession } from "@/lib/authStorage";
+import { apiVerifyOtp, apiResendOtp } from "@/lib/api";
 
 const PRIMARY = "#2563EB";
 
@@ -21,6 +22,8 @@ export default function VerifySignup() {
 
   const [code, setCode] = useState("");
   const [countdown, setCountdown] = useState(0);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isResending, setIsResending] = useState(false);
 
   useEffect(() => {
     let interval: any = null;
@@ -36,21 +39,22 @@ export default function VerifySignup() {
 
   const handleResend = async () => {
     if (countdown > 0) return;
-
-    const users = await getUsers();
-    const userIndex = users.findIndex((u) => u.email === email);
-
-    if (userIndex === -1) {
-      alert("User not found");
+    if (!email) {
+      alert("Email is required");
       return;
     }
 
-    const newCode = Math.floor(1000 + Math.random() * 9000).toString();
-    users[userIndex].verificationCode = newCode;
-    await saveUsers(users);
-
-    alert(`Simulation: A new verification code has been sent: ${newCode}`);
-    setCountdown(120); // Start 2-minute countdown (120 seconds)
+    setIsResending(true);
+    try {
+      const response = await apiResendOtp(email);
+      alert(response.message || "A new verification code has been sent!");
+      setCountdown(120); // Start 2-minute countdown (120 seconds)
+    } catch (error: any) {
+      console.error("Resend OTP error:", error);
+      alert(error.message || "Failed to resend code.");
+    } finally {
+      setIsResending(false);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -64,30 +68,22 @@ export default function VerifySignup() {
       alert("Please enter a valid 4-digit code");
       return;
     }
-
-    const users = await getUsers();
-    const userIndex = users.findIndex((u) => u.email === email);
-
-    if (userIndex === -1) {
-      alert("User not found");
+    if (!email) {
+      alert("Email is required");
       return;
     }
 
-    const user = users[userIndex];
-
-    if (user.verificationCode !== code) {
-      alert("Invalid verification code");
-      return;
+    setIsVerifying(true);
+    try {
+      const response = await apiVerifyOtp(email, code);
+      alert(response.message || "Email verified successfully!");
+      router.replace("/login");
+    } catch (error: any) {
+      console.error("Verify OTP error:", error);
+      alert(error.message || "Invalid or expired verification code.");
+    } finally {
+      setIsVerifying(false);
     }
-
-    // Code is correct, update user
-    const updatedUser = { ...user, isVerified: true };
-    users[userIndex] = updatedUser;
-
-    await saveUsers(users);
-    await setSession(updatedUser);
-
-    router.replace("/login");
   };
 
   return (
@@ -114,17 +110,21 @@ export default function VerifySignup() {
           maxLength={4}
         />
 
-        <Pressable style={styles.button} onPress={handleVerify}>
-          <Text style={styles.buttonText}>Verify & Continue</Text>
+        <Pressable 
+          style={[styles.button, isVerifying && { opacity: 0.7 }]} 
+          onPress={handleVerify}
+          disabled={isVerifying}
+        >
+          <Text style={styles.buttonText}>{isVerifying ? "Verifying..." : "Verify & Continue"}</Text>
         </Pressable>
 
         <Pressable
-          style={[styles.resendButton, countdown > 0 && styles.resendButtonDisabled]}
+          style={[styles.resendButton, (countdown > 0 || isResending) && styles.resendButtonDisabled]}
           onPress={handleResend}
-          disabled={countdown > 0}
+          disabled={countdown > 0 || isResending}
         >
-          <Text style={[styles.resendButtonText, countdown > 0 && styles.resendButtonTextDisabled]}>
-            {countdown > 0 ? `Resend code in ${formatTime(countdown)}` : "Resend Code"}
+          <Text style={[styles.resendButtonText, (countdown > 0 || isResending) && styles.resendButtonTextDisabled]}>
+            {isResending ? "Resending..." : countdown > 0 ? `Resend code in ${formatTime(countdown)}` : "Resend Code"}
           </Text>
         </Pressable>
       </View>

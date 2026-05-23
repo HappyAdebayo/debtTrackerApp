@@ -1,9 +1,23 @@
-import { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, StatusBar, KeyboardAvoidingView, Platform, Modal } from "react-native";
+import { useState, useEffect } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  Pressable,
+  StatusBar,
+  KeyboardAvoidingView,
+  Platform,
+  Modal,
+  ActivityIndicator,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { setSession,getUsers } from "@/lib/authStorage";
+import { setSession, getLastUserId, setLastUserId } from "@/lib/authStorage";
+import { apiLogin, apiRestoreBackup } from "@/lib/api";
 import { Ionicons } from "@expo/vector-icons";
+import { getUserDebts, saveDebts, wipeAllDebts } from "@/lib/debtStorage";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const PRIMARY = "#2563EB";
 
@@ -12,109 +26,292 @@ export default function Login() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [modalVisible, setModalVisible] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Inline error shown below the form
+  const [errorMessage, setErrorMessage] = useState("");
+
+  // Unverified account modal
+  const [unverifiedModalVisible, setUnverifiedModalVisible] = useState(false);
   const [unverifiedEmail, setUnverifiedEmail] = useState("");
 
+  // Cloud backup conflict modal
+  const [cloudBackupModalVisible, setCloudBackupModalVisible] = useState(false);
+  const [pendingCloudTransactions, setPendingCloudTransactions] = useState<any[]>([]);
+  const [isRestoring, setIsRestoring] = useState(false);
+
+  useEffect(() => {
+    // Clear any leftover session token when the login screen mounts
+    AsyncStorage.removeItem("dt_session");
+  }, []);
+
   const handleLogin = async () => {
-    const users = await getUsers();
+    setErrorMessage("");
 
-    const user = users.find(
-      u => u.email === email && u.password === password
-    );
-
-    if (!user) {
-      alert("Invalid credentials");
+    if (!email || !password) {
+      setErrorMessage("Please enter both email and password.");
       return;
     }
 
-    if (user.isVerified === false) {
-      setUnverifiedEmail(user.email);
-      setModalVisible(true);
-      return;
-    }
+    setIsLoading(true);
+    try {
+      const response = await apiLogin(email, password);
+      const { user, token, refreshToken } = response.data;
 
-    await setSession(user);
+      console.log("Login response:", response.data);
+
+      const formattedUser = {
+        id: user.id,
+        email: user.email,
+        businessName: user.business_name || user.businessName || "",
+      };
+
+      // ── Multi-user check ────────────────────────────────────────────
+      // If a different user previously logged in on this device, wipe
+      // their SQLite data before setting up the new session.
+      const lastUserId = await getLastUserId();
+      const newUserId = user.id.toString();
+
+      if (lastUserId && lastUserId !== newUserId) {
+        await wipeAllDebts();
+        console.log("Different user detected — local SQLite data wiped.");
+      }
+
+      await setLastUserId(newUserId);
+      // ────────────────────────────────────────────────────────────────
+
+      await setSession(formattedUser, token, refreshToken);
+
+      // ── Cloud backup check ───────────────────────────────────────────
+      try {
+        const localDebts = await getUserDebts();
+        const hasLocalData = localDebts.length > 0;
+
+        let cloudTransactions: any[] | null = null;
+        try {
+          const backupResponse = await apiRestoreBackup(token);
+          const backupList = backupResponse?.data?.backupData?.data || [];
+          const actualBackupList = Array.isArray(backupList) ? backupList : [];
+
+          if (actualBackupList.length > 0) {
+            const latestBackup = actualBackupList[0];
+            const backupPayload = latestBackup?.data || latestBackup || null;
+            if (backupPayload) {
+              const transactions =
+                backupPayload.transactions ||
+                backupPayload.data?.debts ||
+                backupPayload.debts ||
+                [];
+              if (Array.isArray(transactions)) {
+                cloudTransactions = transactions;
+              }
+            }
+          }
+        } catch (backupErr) {
+          console.error("Cloud backup fetch failed:", backupErr);
+        }
+
+        if (cloudTransactions && cloudTransactions.length > 0) {
+          if (!hasLocalData) {
+            // SQLite is empty → restore silently
+            await saveDebts(cloudTransactions);
+            router.replace("/tabs/home");
+          } else {
+            // Local data exists → ask the user
+            setPendingCloudTransactions(cloudTransactions);
+            setCloudBackupModalVisible(true);
+            // Navigation deferred to modal button handlers
+          }
+        } else {
+          router.replace("/tabs/home");
+        }
+      } catch (checkErr) {
+        console.error("SQLite / backup check error:", checkErr);
+        router.replace("/tabs/home");
+      }
+      // ────────────────────────────────────────────────────────────────
+    } catch (error: any) {
+      console.error("Login error:", error);
+      if (error.status === 403) {
+        setUnverifiedEmail(email);
+        setUnverifiedModalVisible(true);
+      } else {
+        setErrorMessage(error.message || "Invalid email or password.");
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Cloud backup modal: keep local data
+  const handleKeepCurrentData = () => {
+    setCloudBackupModalVisible(false);
     router.replace("/tabs/home");
+  };
+
+  // Cloud backup modal: overwrite with cloud data
+  const handleReplaceWithCloudBackup = async () => {
+    setIsRestoring(true);
+    try {
+      await saveDebts(pendingCloudTransactions);
+      setCloudBackupModalVisible(false);
+      router.replace("/tabs/home");
+    } catch (restoreErr) {
+      console.error("Failed to restore cloud backup:", restoreErr);
+      setIsRestoring(false);
+      setCloudBackupModalVisible(false);
+      setErrorMessage("Failed to restore cloud backup. Please try again.");
+    }
   };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FFFFFF" }}>
       <KeyboardAvoidingView
         style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <StatusBar backgroundColor="#FFFFFF" barStyle="dark-content" />
-
-      <Modal
-        visible={modalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setModalVisible(false)}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalIconContainer}>
-              <Ionicons name="warning-outline" size={48} color="#EF4444" />
-            </View>
-            <Text style={styles.modalTitle}>Account Not Verified</Text>
-            <Text style={styles.modalText}>
-              Your account is not verified yet. Please enter the verification code to activate your account.
-            </Text>
-            <View style={styles.modalButtons}>
-              <Pressable
-                style={[styles.modalBtn, { backgroundColor: PRIMARY }]}
-                onPress={() => {
-                  setModalVisible(false);
-                  router.push(`/verify-signup?email=${encodeURIComponent(unverifiedEmail)}`);
-                }}
-              >
-                <Text style={styles.modalBtnText}>Verify Now</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.modalBtn, { backgroundColor: "#9CA3AF", marginTop: 8 }]}
-                onPress={() => setModalVisible(false)}
-              >
-                <Text style={styles.modalBtnText}>Cancel</Text>
-              </Pressable>
+        <StatusBar backgroundColor="#FFFFFF" barStyle="dark-content" />
+
+        {/* ── Unverified Account Modal ─────────────────────────────── */}
+        <Modal
+          visible={unverifiedModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setUnverifiedModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={[styles.modalIconWrap, { backgroundColor: "#FEE2E2" }]}>
+                <Ionicons name="warning-outline" size={40} color="#EF4444" />
+              </View>
+              <Text style={styles.modalTitle}>Account Not Verified</Text>
+              <Text style={styles.modalBody}>
+                Your account is not verified yet. Please enter the verification
+                code sent to your email to activate your account.
+              </Text>
+              <View style={styles.modalActions}>
+                <Pressable
+                  style={[styles.modalBtn, { backgroundColor: PRIMARY }]}
+                  onPress={() => {
+                    setUnverifiedModalVisible(false);
+                    router.push(
+                      `/verify-signup?email=${encodeURIComponent(unverifiedEmail)}`
+                    );
+                  }}
+                >
+                  <Text style={styles.modalBtnText}>Verify Now</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.modalBtn, styles.modalBtnSecondary]}
+                  onPress={() => setUnverifiedModalVisible(false)}
+                >
+                  <Text style={styles.modalBtnText}>Cancel</Text>
+                </Pressable>
+              </View>
             </View>
           </View>
+        </Modal>
+
+        {/* ── Cloud Backup Conflict Modal ──────────────────────────── */}
+        <Modal
+          visible={cloudBackupModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={handleKeepCurrentData}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={[styles.modalIconWrap, { backgroundColor: "#DBEAFE" }]}>
+                <Ionicons name="cloud-download-outline" size={40} color={PRIMARY} />
+              </View>
+              <Text style={styles.modalTitle}>Cloud Backup Found</Text>
+              <Text style={styles.modalBody}>
+                We found a cloud backup for your account, but this device
+                already has active customer records.{"\n\n"}
+                What would you like to do?
+              </Text>
+              <View style={styles.modalActions}>
+                <Pressable
+                  style={[styles.modalBtn, { backgroundColor: PRIMARY }]}
+                  onPress={handleKeepCurrentData}
+                  disabled={isRestoring}
+                >
+                  <Text style={styles.modalBtnText}>Keep Current Data</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.modalBtn, styles.modalBtnDanger]}
+                  onPress={handleReplaceWithCloudBackup}
+                  disabled={isRestoring}
+                >
+                  {isRestoring ? (
+                    <ActivityIndicator color="#FFF" size="small" />
+                  ) : (
+                    <Text style={styles.modalBtnText}>Replace With Cloud Backup</Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ── Form ───────────────────────────────────────────────────── */}
+        <Text style={styles.title}>Welcome back</Text>
+        <Text style={styles.subtitle}>Login to continue</Text>
+
+        <View style={styles.form}>
+          <TextInput
+            placeholder="Email"
+            placeholderTextColor="#9CA3AF"
+            style={styles.input}
+            value={email}
+            onChangeText={(t) => {
+              setEmail(t);
+              setErrorMessage("");
+            }}
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
+
+          <TextInput
+            placeholder="Password"
+            placeholderTextColor="#9CA3AF"
+            style={styles.input}
+            value={password}
+            onChangeText={(t) => {
+              setPassword(t);
+              setErrorMessage("");
+            }}
+            secureTextEntry
+          />
+
+          {/* Inline error message */}
+          {errorMessage ? (
+            <View style={styles.errorRow}>
+              <Ionicons name="alert-circle-outline" size={15} color="#EF4444" />
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
+          ) : null}
+
+          <Pressable
+            style={[styles.button, isLoading && { opacity: 0.7 }]}
+            onPress={handleLogin}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#FFF" size="small" />
+            ) : (
+              <Text style={styles.buttonText}>Login</Text>
+            )}
+          </Pressable>
+
+          <Pressable onPress={() => router.push("/signup")}>
+            <Text style={styles.link}>
+              Don't have an account?{" "}
+              <Text style={styles.linkBold}>Sign up</Text>
+            </Text>
+          </Pressable>
         </View>
-      </Modal>
-
-      <Text style={styles.title}>Welcome back</Text>
-      <Text style={styles.subtitle}>Login to continue</Text>
-
-      <View style={styles.form}>
-        <TextInput
-          placeholder="Email"
-          placeholderTextColor="#9CA3AF"
-          style={styles.input}
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
-
-        <TextInput
-          placeholder="Password"
-          placeholderTextColor="#9CA3AF"
-          style={styles.input}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
-
-        <Pressable style={styles.button} onPress={handleLogin}>
-          <Text style={styles.buttonText}>Login</Text>
-        </Pressable>
-
-        <Pressable onPress={() => router.push("/signup")}>
-          <Text style={styles.link}>
-            Don’t have an account? <Text style={styles.linkBold}>Sign up</Text>
-          </Text>
-        </Pressable>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -148,12 +345,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#111827",
   },
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 2,
+  },
+  errorText: {
+    color: "#EF4444",
+    fontSize: 13,
+    flex: 1,
+    lineHeight: 18,
+  },
   button: {
     backgroundColor: PRIMARY,
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 6,
+    minHeight: 52,
   },
   buttonText: {
     color: "#FFFFFF",
@@ -169,9 +380,10 @@ const styles = StyleSheet.create({
     color: PRIMARY,
     fontWeight: "700",
   },
+  // ── Modal shared styles ──────────────────────────────────────────────
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 24,
@@ -185,15 +397,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 6,
   },
-  modalIconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: "#FEE2E2",
+  modalIconWrap: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 16,
@@ -205,15 +416,16 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: "center",
   },
-  modalText: {
+  modalBody: {
     fontSize: 14,
     color: "#4B5563",
     textAlign: "center",
-    lineHeight: 20,
+    lineHeight: 21,
     marginBottom: 24,
   },
-  modalButtons: {
+  modalActions: {
     width: "100%",
+    gap: 8,
   },
   modalBtn: {
     paddingVertical: 14,
@@ -221,6 +433,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
+    minHeight: 50,
+  },
+  modalBtnSecondary: {
+    backgroundColor: "#9CA3AF",
+  },
+  modalBtnDanger: {
+    backgroundColor: "#EF4444",
   },
   modalBtnText: {
     color: "#FFFFFF",

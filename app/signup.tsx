@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { getUsers, saveUsers, setSession, User } from "@/lib/authStorage";
+import { apiSignup } from "@/lib/api";
 
 const PRIMARY = "#2563EB";
 
@@ -21,6 +21,7 @@ export default function Signup() {
   const [businessName, setBusinessName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSignup = async () => {
     if (!businessName || !email || !password) {
@@ -28,31 +29,17 @@ export default function Signup() {
       return;
     }
 
-    const users = await getUsers();
-
-    const exists = users.find((u) => u.email === email);
-    if (exists) {
-      alert("User already exists");
-      return;
+    setIsLoading(true);
+    try {
+      const response = await apiSignup(businessName, email, password);
+      alert(response.message || "Registration successful! Please check your email for the verification code.");
+      router.replace(`/verify-signup?email=${encodeURIComponent(email)}`);
+    } catch (error: any) {
+      console.error("Signup error:", error);
+      alert(error.message || "Registration failed. Please try again.");
+    } finally {
+      setIsLoading(false);
     }
-
-    const verificationCode = Math.floor(1000 + Math.random() * 9000).toString();
-
-    // ✅ Generate a unique id for the new user
-    const newUser: User = {
-      id: Date.now().toString(),
-      businessName,
-      email,
-      password,
-      isVerified: false,
-      verificationCode,
-    };
-
-    await saveUsers([...users, newUser]);
-    
-    alert(`Simulation: Your verification code is ${verificationCode}`);
-
-    router.replace(`/verify-signup?email=${encodeURIComponent(email)}`);
   };
 
   return (
@@ -92,9 +79,19 @@ export default function Signup() {
           secureTextEntry
         />
 
-        <Pressable style={styles.button} onPress={handleSignup}>
-          <Text style={styles.buttonText}>Sign Up</Text>
+        <Pressable 
+          style={[styles.button, isLoading && { opacity: 0.7 }]} 
+          onPress={handleSignup}
+          disabled={isLoading}
+        >
+          <Text style={styles.buttonText}>{isLoading ? "Signing up..." : "Sign Up"}</Text>
         </Pressable>
+
+        <Pressable onPress={() => router.push("/login")}>
+                  <Text style={styles.link}>
+                    Already have an account? <Text style={styles.linkBold}>Login</Text>
+                  </Text>
+          </Pressable>
       </View>
     </KeyboardAvoidingView>
     </SafeAreaView>
@@ -142,4 +139,13 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 15,
   },
+   link: {
+    textAlign: "center",
+    marginTop: 18,
+    color: "#6B7280",
+  },
+  linkBold: {
+    color: PRIMARY,
+    fontWeight: "700",
+  }
 });
